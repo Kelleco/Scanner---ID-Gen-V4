@@ -1,0 +1,829 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'none';
+    script-src 'self' 'unsafe-inline' https://unpkg.com;
+    style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com;
+    font-src https://fonts.gstatic.com;
+    img-src 'self' data: blob:;
+    media-src 'self' blob:;
+    connect-src 'self' blob:;
+    object-src 'none';
+    base-uri 'self';
+  ">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>Scanner &amp; ID Gen V3</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    #reader { width: 100%; max-width: 480px; margin: 0 auto; min-height: 1px; }
+    #reader video { border-radius: 0.5rem; }
+    .toast { transition: opacity .3s; }
+    .row-deleted { opacity: 0; transition: opacity .25s; }
+    .not-found { color: #b91c1c; font-style: italic; }
+    [contenteditable=true]:focus { outline: 2px solid #3b82f6; outline-offset: -2px; border-radius: 3px; }
+    .sort-h { cursor: pointer; user-select: none; }
+    .sort-h:hover { color: #1f2937; }
+    .drag-handle { cursor: grab; touch-action: none; color: #9ca3af; user-select: none; }
+    .drag-handle:active { cursor: grabbing; }
+    .dragging { opacity: 0.5; background: #eff6ff; }
+    .drop-above { box-shadow: 0 -2px 0 0 #3b82f6 inset; }
+    .drop-below { box-shadow: 0 2px 0 0 #3b82f6 inset; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-900 min-h-screen">
+  <div class="max-w-3xl mx-auto p-4 space-y-4">
+    <header class="flex items-center justify-between">
+      <h1 class="text-xl font-bold">Scanner &amp; ID Gen <span class="text-gray-400 font-normal">V3</span></h1>
+      <span class="text-xs text-gray-500">Phase 3</span>
+    </header>
+
+    <section class="bg-white rounded-lg shadow p-4 space-y-2">
+      <div class="flex items-center justify-between">
+        <h2 class="font-semibold">Reference CSV</h2>
+        <div class="flex gap-2">
+          <input id="csvFile" type="file" accept=".csv,text/csv" class="hidden">
+          <button id="btnLoadCsv" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm">Load CSV</button>
+          <button id="btnClearCsv" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm hidden">Clear</button>
+        </div>
+      </div>
+      <div id="csvStatus" class="text-sm text-gray-600">No CSV loaded — scans will log as NOT FOUND.</div>
+    </section>
+
+    <section class="bg-white rounded-lg shadow p-4 space-y-3">
+      <h2 class="font-semibold">ID Format</h2>
+      <div class="grid grid-cols-3 gap-3">
+        <label class="block">
+          <span class="text-xs text-gray-600">Prefix</span>
+          <input id="cfgPrefix" type="text" maxlength="4" class="mono mt-1 w-full rounded border-gray-300 px-2 py-1" placeholder="RS">
+        </label>
+        <label class="block">
+          <span class="text-xs text-gray-600">Start #</span>
+          <input id="cfgStart" type="number" min="0" value="1" class="mono mt-1 w-full rounded border-gray-300 px-2 py-1">
+        </label>
+        <label class="block">
+          <span class="text-xs text-gray-600">Min Digits</span>
+          <input id="cfgDigits" type="number" min="1" max="10" value="3" class="mono mt-1 w-full rounded border-gray-300 px-2 py-1">
+        </label>
+      </div>
+      <div class="text-sm text-gray-600">Next ID: <span id="nextIdPreview" class="mono font-semibold text-gray-900">RS001</span></div>
+    </section>
+
+    <section class="bg-white rounded-lg shadow p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="font-semibold">Scanner</h2>
+        <button id="modeToggle" class="text-xs px-3 py-1 rounded font-medium bg-blue-100 text-blue-800 hover:bg-blue-200">QR Mode &rarr; Install No</button>
+      </div>
+      <div id="reader"></div>
+      <div class="flex gap-2 items-center">
+        <button id="btnStart" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded font-medium">Start</button>
+        <label class="flex items-center gap-2 text-sm flex-1">
+          <span>Zoom</span>
+          <input id="zoom" type="range" min="1" max="4" step="0.1" value="1" class="flex-1">
+          <span id="zoomVal" class="mono w-12 text-right">1.0&times;</span>
+        </label>
+      </div>
+      <div class="flex gap-2">
+        <input id="manualInput" type="text" placeholder="Or type a value and press Enter&hellip;" class="flex-1 rounded border-gray-300 px-2 py-1">
+        <button id="btnManual" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm">Add</button>
+      </div>
+      <div id="pendingIndicator" class="text-xs text-purple-700 hidden">&#9203; 1/2 reads&hellip; show the barcode again to confirm.</div>
+    </section>
+
+    <section class="bg-white rounded-lg shadow p-4 space-y-3">
+      <div class="flex items-center justify-between flex-wrap gap-2">
+        <div class="flex items-center gap-2">
+          <h2 class="font-semibold">Scan Log</h2>
+          <span id="logCount" class="text-xs text-gray-500">0 rows</span>
+        </div>
+        <div class="flex gap-2">
+          <button id="btnDownload" class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm font-medium">Download</button>
+          <button id="btnClearAll" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm">Clear History</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-500 border-b">
+              <th class="py-2 pr-1 font-medium w-6"></th>
+              <th class="py-2 pr-3 font-medium sort-h" data-col="tag">Tag <span class="sort-arrow"></span></th>
+              <th class="py-2 pr-3 font-medium sort-h" data-col="qr">QR (Install No) <span class="sort-arrow"></span></th>
+              <th class="py-2 pr-3 font-medium sort-h" data-col="barcode">Mapped Barcode <span class="sort-arrow"></span></th>
+              <th class="py-2 font-medium text-right w-8">&times;</th>
+            </tr>
+          </thead>
+          <tbody id="logBody" class="divide-y"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div id="clearModal" class="fixed inset-0 z-40 flex hidden items-center justify-center p-4" style="background:rgba(0,0,0,0.4)">
+    <div class="bg-white rounded-lg shadow-lg max-w-md w-full p-4 space-y-3">
+      <h3 class="font-semibold">Clear scan log?</h3>
+      <p class="text-sm text-gray-600">All scanned rows will be removed. The loaded CSV and ID-format settings are preserved.</p>
+      <div class="flex justify-end gap-2">
+        <button id="btnClearCancel" class="px-3 py-1 rounded text-sm bg-gray-200 hover:bg-gray-300">Cancel</button>
+        <button id="btnClearConfirm" class="px-3 py-1 rounded text-sm bg-red-600 hover:bg-red-700 text-white font-medium">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script>
+    'use strict';
+    (function () {
+      const STORAGE_LOG = 'qrtag_log';
+      const STORAGE_CONFIG = 'qrtag_config';
+      const STORAGE_CSV_TEXT = 'qrtag_csv_text';
+      const STORAGE_CSV_NAME = 'qrtag_csv_name';
+      const STORAGE_SORT = 'qrtag_sort';
+      const SCAN_COOLDOWN_MS = 1500;
+      const DELETE_CONFIRM_MS = 3000;
+
+      let log = [];
+      const scannedSet = new Set();
+      const tagSet = new Set();
+      const mappedBarcodeSet = new Set();
+
+      const csvIndex = { byInstall: new Map(), byBarcode: new Map(), count: 0, name: '' };
+      let scanMode = 'qr';
+      let pendingBarcode = null;
+      let sortState = { col: null, dir: 'asc' };
+
+      let config = { prefix: 'RS', start: 1, minDigits: 3 };
+      const deleteTimers = new WeakMap();
+
+      let qrInstance = null;
+      let scannerRunning = false;
+      let scannerStarting = false;
+      let lastScanAt = 0;
+      function loadState() {
+        try {
+          const raw = localStorage.getItem(STORAGE_LOG);
+          if (raw) log = JSON.parse(raw) || [];
+        } catch (_) { log = []; }
+        try {
+          const raw = localStorage.getItem(STORAGE_CONFIG);
+          if (raw) Object.assign(config, JSON.parse(raw) || {});
+        } catch (_) {}
+        try {
+          const raw = localStorage.getItem(STORAGE_SORT);
+          if (raw) Object.assign(sortState, JSON.parse(raw) || {});
+        } catch (_) {}
+        const csvText = localStorage.getItem(STORAGE_CSV_TEXT);
+        const csvName = localStorage.getItem(STORAGE_CSV_NAME);
+        if (csvText) {
+          try { ingestCsvText(csvText, csvName || 'restored.csv', /*persist*/ false); }
+          catch (_) { /* corrupt CSV — ignore */ }
+        }
+        rebuildSets();
+      }
+      function saveLog() { localStorage.setItem(STORAGE_LOG, JSON.stringify(log)); }
+      function saveConfig() { localStorage.setItem(STORAGE_CONFIG, JSON.stringify(config)); }
+      function saveSort() { localStorage.setItem(STORAGE_SORT, JSON.stringify(sortState)); }
+
+      function rebuildSets() {
+        scannedSet.clear(); tagSet.clear(); mappedBarcodeSet.clear();
+        for (const r of log) {
+          if (r.qr && r.qr !== 'NOT FOUND') scannedSet.add(normalizeInstall(r.qr));
+          if (r.tag) tagSet.add(r.tag);
+          if (r.barcode && r.barcode !== 'NOT FOUND') mappedBarcodeSet.add(r.barcode);
+        }
+      }
+
+      function escHtml(s) {
+        return String(s == null ? '' : s)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      }
+      function nowHHMMSS() {
+        const d = new Date();
+        return [d.getHours(), d.getMinutes(), d.getSeconds()]
+          .map(n => String(n).padStart(2, '0')).join(':');
+      }
+      function normalizeInstall(v) {
+        const s = String(v == null ? '' : v).trim();
+        return /^\d+$/.test(s) ? String(parseInt(s, 10)) : s;
+      }
+      function nextTagId() {
+        const prefix = (config.prefix || '').toUpperCase();
+        const minDigits = Math.max(1, Math.min(10, config.minDigits | 0 || 1));
+        let n = Math.max(0, config.start | 0);
+        let id;
+        do {
+          id = prefix + String(n).padStart(minDigits, '0');
+          n++;
+        } while (tagSet.has(id));
+        return id;
+      }
+
+      function ingestCsvText(text, name, persist) {
+        const result = Papa.parse(text, {
+          header: true,
+          skipEmptyLines: true,
+          transformHeader: h => String(h || '').replace(/^﻿/, '').trim().toLowerCase(),
+        });
+        const rows = result.data || [];
+        const headers = (result.meta && result.meta.fields) ? result.meta.fields : [];
+        if (!headers.includes('install no.') || !headers.includes('barcode')) {
+          throw new Error('CSV must contain "Install No." and "Barcode" columns');
+        }
+        csvIndex.byInstall.clear();
+        csvIndex.byBarcode.clear();
+        let kept = 0;
+        for (const r of rows) {
+          const inst = String(r['install no.'] || '').trim();
+          const bar = String(r['barcode'] || '').trim();
+          if (!inst && !bar) continue;
+          if (inst) {
+            csvIndex.byInstall.set(inst, bar);
+            const ninst = normalizeInstall(inst);
+            if (ninst !== inst) csvIndex.byInstall.set(ninst, bar);
+          }
+          if (bar) csvIndex.byBarcode.set(bar, inst);
+          kept++;
+        }
+        csvIndex.count = kept;
+        csvIndex.name = name || '';
+        if (persist) {
+          localStorage.setItem(STORAGE_CSV_TEXT, text);
+          localStorage.setItem(STORAGE_CSV_NAME, csvIndex.name);
+        }
+      }
+
+      function clearCsv() {
+        csvIndex.byInstall.clear();
+        csvIndex.byBarcode.clear();
+        csvIndex.count = 0;
+        csvIndex.name = '';
+        localStorage.removeItem(STORAGE_CSV_TEXT);
+        localStorage.removeItem(STORAGE_CSV_NAME);
+        renderCsvStatus();
+      }
+
+      const TOAST_CLR = {
+        blue: 'bg-blue-600', yellow: 'bg-yellow-500', purple: 'bg-purple-600',
+        orange: 'bg-orange-500', red: 'bg-red-600', green: 'bg-green-600',
+      };
+      function toast(msg, color) {
+        const host = document.getElementById('toasts');
+        const el = document.createElement('div');
+        el.className = 'toast ' + (TOAST_CLR[color] || 'bg-gray-700') + ' text-white px-3 py-2 rounded shadow text-sm';
+        el.textContent = msg;
+        host.appendChild(el);
+        setTimeout(() => { el.style.opacity = '0'; }, 2700);
+        setTimeout(() => { el.remove(); }, 3000);
+      }
+
+      const $ = id => document.getElementById(id);
+
+      function refreshPreview() { $('nextIdPreview').textContent = nextTagId(); }
+
+      function renderConfigInputs() {
+        $('cfgPrefix').value = config.prefix;
+        $('cfgStart').value = config.start;
+        $('cfgDigits').value = config.minDigits;
+        refreshPreview();
+      }
+
+      function renderCsvStatus() {
+        const status = $('csvStatus');
+        const clearBtn = $('btnClearCsv');
+        if (csvIndex.count > 0) {
+          status.innerHTML = 'Loaded: <span class="font-semibold">' + csvIndex.count + ' records</span> (' + escHtml(csvIndex.name) + ')';
+          status.className = 'text-sm text-green-700';
+          clearBtn.classList.remove('hidden');
+        } else {
+          status.textContent = 'No CSV loaded — scans will log as NOT FOUND.';
+          status.className = 'text-sm text-gray-600';
+          clearBtn.classList.add('hidden');
+        }
+      }
+
+      function renderModeUI() {
+        const btn = $('modeToggle');
+        if (scanMode === 'qr') {
+          btn.innerHTML = 'QR Mode &rarr; Install No';
+          btn.className = 'text-xs px-3 py-1 rounded font-medium bg-blue-100 text-blue-800 hover:bg-blue-200';
+        } else {
+          btn.innerHTML = 'Mapped Barcode Mode &rarr; Mapped Barcode';
+          btn.className = 'text-xs px-3 py-1 rounded font-medium bg-purple-100 text-purple-800 hover:bg-purple-200';
+        }
+        updatePendingIndicator();
+      }
+
+      function updatePendingIndicator() {
+        const el = $('pendingIndicator');
+        if (scanMode === 'barcode' && pendingBarcode) {
+          el.classList.remove('hidden');
+          el.textContent = '⏳ 1/2 reads… show the barcode again to confirm: ' + pendingBarcode;
+        } else {
+          el.classList.add('hidden');
+          el.textContent = '';
+        }
+      }
+
+      function renderSortArrows() {
+        document.querySelectorAll('th.sort-h').forEach(th => {
+          const arrow = th.querySelector('.sort-arrow');
+          if (sortState.col === th.dataset.col) {
+            arrow.textContent = sortState.dir === 'asc' ? ' ▲' : ' ▼';
+            th.classList.add('text-gray-800');
+          } else {
+            arrow.textContent = '';
+            th.classList.remove('text-gray-800');
+          }
+        });
+      }
+
+      function sortLog() {
+        if (!sortState.col) return;
+        const dir = sortState.dir === 'asc' ? 1 : -1;
+        log.sort((a, b) => {
+          const av = String(a[sortState.col] || '');
+          const bv = String(b[sortState.col] || '');
+          return av.localeCompare(bv, undefined, { numeric: true, sensitivity: 'base' }) * dir;
+        });
+      }
+
+      function renderLog() {
+        sortLog();
+        const tbody = $('logBody');
+        tbody.innerHTML = '';
+        if (log.length === 0) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = '<td colspan="5" class="py-3 text-center text-gray-400">No items scanned yet.</td>';
+          tbody.appendChild(tr);
+        } else {
+          for (const row of log) tbody.appendChild(buildRowEl(row));
+        }
+        $('logCount').textContent = log.length + (log.length === 1 ? ' row' : ' rows');
+        renderSortArrows();
+        refreshPreview();
+      }
+
+      function buildRowEl(row) {
+        const tr = document.createElement('tr');
+        tr.dataset.tag = row.tag;
+        const barcodeHtml = row.barcode === 'NOT FOUND'
+          ? '<span class="not-found">NOT FOUND</span>'
+          : escHtml(row.barcode);
+        tr.innerHTML =
+          '<td class="py-2 pr-1 text-center"><span class="drag-handle" aria-label="Drag to reorder">⋮⋮</span></td>' +
+          '<td class="py-2 pr-3 mono cell-edit" data-field="tag">' + escHtml(row.tag) + '</td>' +
+          '<td class="py-2 pr-3 cell-edit" data-field="qr">' + escHtml(row.qr) + '</td>' +
+          '<td class="py-2 pr-3 cell-edit" data-field="barcode">' + barcodeHtml + '</td>' +
+          '<td class="py-2 text-right">' +
+            '<button class="del-btn text-gray-400 hover:text-red-600 px-2" aria-label="Delete">&times;</button>' +
+          '</td>';
+        tr.querySelector('.del-btn').addEventListener('click', () => onDeleteClick(tr, row));
+        tr.querySelectorAll('.cell-edit').forEach(cell => attachCellEditing(cell, cell.dataset.field, row));
+        attachDragHandle(tr);
+        return tr;
+      }
+
+      function attachCellEditing(cell, field, row) {
+        cell.contentEditable = 'true';
+        cell.addEventListener('focus', () => {
+          cell.dataset.original = (cell.innerText || '').trim();
+        });
+        cell.addEventListener('blur', () => commitEdit(cell, field, row));
+        cell.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); cell.blur(); }
+          if (e.key === 'Escape') { e.preventDefault(); cell.innerText = cell.dataset.original || ''; cell.blur(); }
+        });
+      }
+
+      function commitEdit(cell, field, row) {
+        const newVal = (cell.innerText || '').trim();
+        const oldVal = (cell.dataset.original || '').trim();
+        if (newVal === oldVal) {
+          // Restore display formatting (NOT FOUND styling) in case it was stripped.
+          if (field === 'barcode' && row.barcode === 'NOT FOUND') {
+            cell.innerHTML = '<span class="not-found">NOT FOUND</span>';
+          }
+          return;
+        }
+        if (field === 'tag') {
+          if (!newVal) { cell.innerText = oldVal; toast('Tag is required', 'orange'); return; }
+          if (tagSet.has(newVal)) { cell.innerText = oldVal; toast('Duplicate Tag: ' + newVal, 'orange'); return; }
+          row.tag = newVal;
+          cell.parentElement.dataset.tag = newVal;
+        } else if (field === 'qr') {
+          row.qr = newVal;
+        } else if (field === 'barcode') {
+          if (newVal && newVal !== 'NOT FOUND' && mappedBarcodeSet.has(newVal)) {
+            cell.innerHTML = row.barcode === 'NOT FOUND'
+              ? '<span class="not-found">NOT FOUND</span>'
+              : escHtml(oldVal);
+            toast('Duplicate Barcode: ' + newVal, 'orange');
+            return;
+          }
+          row.barcode = newVal || 'NOT FOUND';
+          if (row.barcode === 'NOT FOUND') {
+            cell.innerHTML = '<span class="not-found">NOT FOUND</span>';
+          }
+        }
+        rebuildSets();
+        saveLog();
+        refreshPreview();
+      }
+
+      let dragCtx = null;
+      function attachDragHandle(tr) {
+        const handle = tr.querySelector('.drag-handle');
+        handle.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          handle.setPointerCapture(e.pointerId);
+          beginDrag(tr, e);
+        });
+      }
+
+      function beginDrag(tr, downEv) {
+        const tbody = tr.parentElement;
+        tr.classList.add('dragging');
+        dragCtx = { tr, tbody, pointerId: downEv.pointerId, lastTarget: null };
+
+        const onMove = (ev) => {
+          if (!dragCtx) return;
+          const y = ev.clientY;
+          const rows = Array.from(tbody.children).filter(r => r !== tr && !r.classList.contains('row-deleted'));
+          let dropEl = null, dropPos = null;
+          for (const r of rows) {
+            const rect = r.getBoundingClientRect();
+            if (y < rect.top + rect.height / 2) { dropEl = r; dropPos = 'above'; break; }
+          }
+          if (!dropEl && rows.length) { dropEl = rows[rows.length - 1]; dropPos = 'below'; }
+          if (dragCtx.lastTarget && dragCtx.lastTarget !== dropEl) {
+            dragCtx.lastTarget.classList.remove('drop-above', 'drop-below');
+          }
+          if (dropEl) {
+            dropEl.classList.remove('drop-above', 'drop-below');
+            dropEl.classList.add(dropPos === 'above' ? 'drop-above' : 'drop-below');
+            dragCtx.lastTarget = dropEl;
+            dragCtx.dropPos = dropPos;
+          }
+        };
+
+        const onUp = () => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', onUp);
+          if (!dragCtx) return;
+          const target = dragCtx.lastTarget;
+          const moved = !!target;
+          if (target) {
+            target.classList.remove('drop-above', 'drop-below');
+            if (dragCtx.dropPos === 'above') tbody.insertBefore(tr, target);
+            else tbody.insertBefore(tr, target.nextSibling);
+          }
+          tr.classList.remove('dragging');
+          if (moved) {
+            const order = Array.from(tbody.children)
+              .map(r => r.dataset.tag)
+              .filter(Boolean);
+            const map = new Map(log.map(r => [r.tag, r]));
+            const reordered = [];
+            for (const t of order) { const r = map.get(t); if (r) reordered.push(r); }
+            if (reordered.length === log.length) log = reordered;
+            if (sortState.col) { sortState = { col: null, dir: 'asc' }; saveSort(); renderSortArrows(); }
+            saveLog();
+          }
+          dragCtx = null;
+        };
+
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onUp);
+      }
+
+      function onDeleteClick(tr, row) {
+        const btn = tr.querySelector('.del-btn');
+        const pending = deleteTimers.get(tr);
+        if (pending) {
+          clearTimeout(pending);
+          deleteTimers.delete(tr);
+          commitDelete(tr, row);
+          return;
+        }
+        btn.textContent = 'Sure?';
+        btn.classList.remove('text-gray-400');
+        btn.classList.add('text-red-600', 'font-semibold', 'text-xs');
+        const t = setTimeout(() => {
+          btn.innerHTML = '&times;';
+          btn.classList.add('text-gray-400');
+          btn.classList.remove('text-red-600', 'font-semibold', 'text-xs');
+          deleteTimers.delete(tr);
+        }, DELETE_CONFIRM_MS);
+        deleteTimers.set(tr, t);
+      }
+
+      function commitDelete(tr, row) {
+        const i = log.findIndex(r => r.tag === row.tag);
+        if (i >= 0) log.splice(i, 1);
+        rebuildSets();
+        tr.classList.add('row-deleted');
+        setTimeout(() => { saveLog(); renderLog(); }, 240);
+      }
+
+      function acceptScan(rawValue, source) {
+        const value = String(rawValue || '').trim();
+        if (!value) return;
+        source = source || 'scan';
+        const now = Date.now();
+        if (source === 'scan' && now - lastScanAt < SCAN_COOLDOWN_MS) return;
+        lastScanAt = now;
+
+        if (scanMode === 'qr') {
+          if (scannedSet.has(normalizeInstall(value))) { toast('Duplicate: ' + value, 'orange'); return; }
+          commitScan(value, 'qr');
+        } else {
+          if (mappedBarcodeSet.has(value)) { toast('Duplicate barcode: ' + value, 'orange'); return; }
+          if (source === 'manual') {
+            pendingBarcode = null;
+            updatePendingIndicator();
+            commitScan(value, 'barcode');
+            return;
+          }
+          if (pendingBarcode === value) {
+            pendingBarcode = null;
+            updatePendingIndicator();
+            commitScan(value, 'barcode');
+          } else {
+            pendingBarcode = value;
+            updatePendingIndicator();
+          }
+        }
+      }
+
+      function commitScan(value, kind) {
+        const tag = nextTagId();
+        let qr, barcode;
+        if (kind === 'qr') {
+          qr = value;
+          barcode = csvIndex.byInstall.get(value)
+                 || csvIndex.byInstall.get(normalizeInstall(value))
+                 || 'NOT FOUND';
+        } else {
+          barcode = value;
+          qr = csvIndex.byBarcode.get(value) || 'NOT FOUND';
+        }
+        const row = { time: nowHHMMSS(), tag: tag, qr: qr, barcode: barcode };
+        log.unshift(row);
+        if (qr !== 'NOT FOUND') scannedSet.add(normalizeInstall(qr));
+        if (barcode !== 'NOT FOUND') mappedBarcodeSet.add(barcode);
+        tagSet.add(tag);
+        saveLog();
+        renderLog();
+        if (kind === 'qr') {
+          if (barcode === 'NOT FOUND') toast('+ ' + tag + ' (not in CSV)', 'yellow');
+          else toast('+ ' + tag + ' → ' + barcode, 'blue');
+        } else {
+          if (qr === 'NOT FOUND') toast('+ ' + tag + ' (barcode, not in CSV)', 'purple');
+          else toast('+ ' + tag + ' ← ' + qr, 'purple');
+        }
+        if (navigator.vibrate) { try { navigator.vibrate(50); } catch (_) {} }
+      }
+
+      function setStartButtonState(running) {
+        const b = $('btnStart');
+        b.textContent = running ? 'Stop' : 'Start';
+        b.classList.toggle('bg-blue-600', !running);
+        b.classList.toggle('hover:bg-blue-700', !running);
+        b.classList.toggle('bg-red-600', running);
+        b.classList.toggle('hover:bg-red-700', running);
+      }
+
+      async function startScanner() {
+        if (scannerRunning || scannerStarting) return;
+        if (typeof Html5Qrcode === 'undefined') { toast('Scanner library failed to load', 'red'); return; }
+        scannerStarting = true;
+        try {
+          if (!qrInstance) qrInstance = new Html5Qrcode('reader');
+          const cams = await Html5Qrcode.getCameras();
+          if (!cams || cams.length === 0) { toast('No camera found', 'red'); return; }
+          const back = cams.find(c => /back|rear|environment/i.test(c.label || '')) || cams[cams.length - 1];
+          await qrInstance.start(
+            back.id,
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            (decoded) => acceptScan(decoded, 'scan'),
+            () => {}
+          );
+          scannerRunning = true;
+          setStartButtonState(true);
+          applyZoom(parseFloat($('zoom').value));
+        } catch (err) {
+          console.error(err);
+          toast('Camera error: ' + ((err && err.message) || err), 'red');
+        } finally {
+          scannerStarting = false;
+        }
+      }
+
+      async function stopScanner() {
+        if (!qrInstance || !scannerRunning) { setStartButtonState(false); return; }
+        try { await qrInstance.stop(); } catch (_) {}
+        scannerRunning = false;
+        setStartButtonState(false);
+      }
+
+      function applyZoom(z) {
+        $('zoomVal').textContent = z.toFixed(1) + '×';
+        if (!qrInstance || !scannerRunning) return;
+        try {
+          const getCaps = qrInstance.getRunningTrackCameraCapabilities;
+          if (typeof getCaps === 'function') {
+            const caps = getCaps.call(qrInstance);
+            const zf = caps && caps.zoomFeature && caps.zoomFeature();
+            if (zf && zf.isSupported && zf.isSupported()) { zf.apply(z); return; }
+          }
+        } catch (_) {}
+        const video = document.querySelector('#reader video');
+        if (video) {
+          video.style.transform = 'scale(' + z + ')';
+          video.style.transformOrigin = 'center center';
+        }
+      }
+
+      function defaultFilename() {
+        const d = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        return 'scan_log_' + d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      }
+
+      function csvQuote(v) {
+        const s = String(v == null ? '' : v);
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+
+      function buildCsvText(rows) {
+        const lines = ['Tag,QR,Barcode'];
+        for (const r of rows) {
+          lines.push([r.tag, r.qr, r.barcode].map(csvQuote).join(','));
+        }
+        return lines.join('\r\n') + '\r\n';
+      }
+
+      async function writeFile(filename, text) {
+        if (window.showSaveFilePicker) {
+          try {
+            const handle = await window.showSaveFilePicker({
+              suggestedName: filename,
+              types: [{ description: 'CSV', accept: { 'text/csv': ['.csv'] } }],
+            });
+            const writable = await handle.createWritable();
+            await writable.write(text);
+            await writable.close();
+            return true;
+          } catch (err) {
+            if (err && err.name === 'AbortError') return false;
+            // Other errors: fall through to anchor fallback.
+          }
+        }
+        const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 100);
+        return true;
+      }
+
+      async function doDownload() {
+        const text = buildCsvText(log);
+        const ok = await writeFile(defaultFilename() + '.csv', text);
+        if (ok) toast('Downloaded ' + log.length + ' row' + (log.length === 1 ? '' : 's'), 'green');
+      }
+
+      function openClearModal() { $('clearModal').classList.remove('hidden'); }
+      function closeClearModal() { $('clearModal').classList.add('hidden'); }
+      function doClearAll() {
+        log = [];
+        scannedSet.clear();
+        tagSet.clear();
+        mappedBarcodeSet.clear();
+        saveLog();
+        renderLog();
+        closeClearModal();
+        toast('Scan log cleared', 'orange');
+      }
+
+      function wire() {
+        $('cfgPrefix').addEventListener('input', (e) => {
+          config.prefix = e.target.value.toUpperCase().slice(0, 4);
+          e.target.value = config.prefix;
+          saveConfig(); refreshPreview();
+        });
+        $('cfgStart').addEventListener('input', (e) => {
+          config.start = Math.max(0, parseInt(e.target.value, 10) || 0);
+          saveConfig(); refreshPreview();
+        });
+        $('cfgDigits').addEventListener('input', (e) => {
+          const d = Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 1));
+          config.minDigits = d;
+          saveConfig(); refreshPreview();
+        });
+
+        $('btnStart').addEventListener('click', () => {
+          if (scannerRunning) stopScanner(); else startScanner();
+        });
+        $('zoom').addEventListener('input', (e) => applyZoom(parseFloat(e.target.value)));
+
+        const submitManual = () => {
+          const v = $('manualInput').value;
+          if (!v.trim()) return;
+          acceptScan(v, 'manual');
+          $('manualInput').value = '';
+        };
+        $('btnManual').addEventListener('click', submitManual);
+        $('manualInput').addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); submitManual(); }
+        });
+
+        $('modeToggle').addEventListener('click', () => {
+          scanMode = (scanMode === 'qr') ? 'barcode' : 'qr';
+          pendingBarcode = null;
+          renderModeUI();
+        });
+
+        $('btnLoadCsv').addEventListener('click', () => $('csvFile').click());
+        $('csvFile').addEventListener('change', (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            try {
+              ingestCsvText(String(reader.result || ''), file.name, true);
+              renderCsvStatus();
+              toast('Loaded ' + csvIndex.count + ' records from ' + file.name, 'green');
+            } catch (err) {
+              toast('CSV error: ' + (err.message || err), 'red');
+            }
+          };
+          reader.onerror = () => toast('Could not read file', 'red');
+          reader.readAsText(file);
+          e.target.value = '';
+        });
+        $('btnClearCsv').addEventListener('click', () => {
+          clearCsv();
+          toast('CSV cleared', 'orange');
+        });
+
+        document.querySelectorAll('th.sort-h').forEach(th => {
+          th.addEventListener('click', () => {
+            const col = th.dataset.col;
+            if (sortState.col === col) {
+              sortState.dir = (sortState.dir === 'asc') ? 'desc' : 'asc';
+            } else {
+              sortState.col = col;
+              sortState.dir = 'asc';
+            }
+            saveSort();
+            renderLog();
+          });
+        });
+
+        $('btnDownload').addEventListener('click', doDownload);
+
+        $('btnClearAll').addEventListener('click', openClearModal);
+        $('btnClearCancel').addEventListener('click', closeClearModal);
+        $('btnClearConfirm').addEventListener('click', doClearAll);
+        $('clearModal').addEventListener('click', (e) => {
+          if (e.target === $('clearModal')) closeClearModal();
+        });
+
+        document.addEventListener('keydown', (e) => {
+          if (e.key !== 'Escape') return;
+          if (!$('clearModal').classList.contains('hidden')) closeClearModal();
+        });
+
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'hidden' && scannerRunning) {
+            stopScanner();
+          }
+        });
+      }
+
+      loadState();
+      wire();
+      renderConfigInputs();
+      renderCsvStatus();
+      renderModeUI();
+      renderLog();
+    })();
+  </script>
+</body>
+</html>
