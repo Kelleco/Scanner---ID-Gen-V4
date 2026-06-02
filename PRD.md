@@ -1,4 +1,4 @@
-# Product Requirements Document: Scanner & ID Gen V3
+# Product Requirements Document: Scanner & ID Gen V4
 
 ## Overview
 
@@ -119,6 +119,20 @@ Load CSV database → Configure ID format → Start camera → Scan item
 - Clears all log rows, in-memory tracking sets, and `localStorage` log entry
 - Preserves loaded CSV database and ID settings
 
+### 9. Offline Support (PWA)
+
+- Installable as a Progressive Web App ("Add to Home screen") on Android Chrome
+- A service worker (`sw.js`) precaches the full app shell on first visit:
+  `index.html`, the manifest, the three vendored libraries, and the app icons
+- After install, the app launches and runs **fully offline** — including the
+  camera, because the installed PWA keeps the `https://` origin (a secure
+  context required by `getUserMedia`)
+- The offline-critical libraries (Tailwind, PapaParse, html5-qrcode) are
+  **vendored under `vendor/`** rather than loaded from a CDN, so the cache is
+  same-origin and the install fails loudly rather than caching broken assets
+- Google Fonts remain on CDN; offline they degrade gracefully to system fonts
+- Cache is versioned (`scanner-id-v1`); bump the version to ship a shell update
+
 ---
 
 ## Validation Rules
@@ -180,17 +194,20 @@ Auto-dismiss after 3 seconds.
 
 ---
 
-## External Dependencies (CDN)
+## External Dependencies
 
-| Library | Purpose |
-|---|---|
-| Tailwind CSS | Responsive utility-first styling |
-| html5-qrcode | Camera QR/barcode scanning |
-| PapaParse | CSV parsing |
-| Google APIs (Picker, OAuth2, Drive) | Drive file selection and access |
-| Google Fonts (Inter, JetBrains Mono) | Typography |
+| Library | Purpose | Source |
+|---|---|---|
+| Tailwind CSS | Responsive utility-first styling | Vendored (`vendor/`) |
+| html5-qrcode | Camera QR/barcode scanning | Vendored (`vendor/`) |
+| PapaParse | CSV parsing | Vendored (`vendor/`) |
+| Google APIs (Picker, OAuth2, Drive) | Drive file selection and access | CDN |
+| Google Fonts (Inter, JetBrains Mono) | Typography | CDN (system-font fallback offline) |
 
-**Built-in browser APIs used:** Camera, Fetch, File System Access, localStorage, Vibration, Page Visibility
+The three offline-critical libraries are vendored locally so the app works
+offline and the service-worker cache stays same-origin (see §9).
+
+**Built-in browser APIs used:** Camera, Fetch, File System Access, localStorage, Vibration, Page Visibility, Service Worker, Cache Storage
 
 ---
 
@@ -213,6 +230,5 @@ No open issues. All six issues from the V2 code review were resolved in the V3 i
 
 - No backend, database, or user accounts
 - No multi-user collaboration
-- No offline PWA service worker
 - No native mobile app
 - No barcode printing or label generation
