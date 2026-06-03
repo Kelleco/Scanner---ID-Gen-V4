@@ -31,6 +31,7 @@
     #reader { width: 100%; max-width: 480px; margin: 0 auto; min-height: 1px; }
     #reader video { border-radius: 0.5rem; }
     .toast { transition: opacity .3s; }
+    .bg-orange-500 { background-color: #f97316; }
     .row-deleted { opacity: 0; transition: opacity .25s; }
     .not-found { color: #b91c1c; font-style: italic; }
     [contenteditable=true]:focus { outline: 2px solid #3b82f6; outline-offset: -2px; border-radius: 3px; }
@@ -95,6 +96,7 @@
           <span id="zoomVal" class="mono w-12 text-right">1.0&times;</span>
         </label>
       </div>
+      <input id="tagInput" type="text" placeholder="Tag (optional)" class="w-full mono rounded border-gray-300 px-2 py-1">
       <div class="flex gap-2">
         <input id="manualInput" type="text" placeholder="Or type a value and press Enter&hellip;" class="flex-1 rounded border-gray-300 px-2 py-1">
         <button id="btnManual" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm">Add</button>
@@ -278,17 +280,18 @@
       }
 
       const TOAST_CLR = {
-        blue: 'bg-blue-600', yellow: 'bg-yellow-500', purple: 'bg-purple-600',
+        blue: 'bg-blue-600', purple: 'bg-purple-600',
         orange: 'bg-orange-500', red: 'bg-red-600', green: 'bg-green-600',
       };
-      function toast(msg, color) {
+      function toast(msg, color, durationMs) {
         const host = document.getElementById('toasts');
         const el = document.createElement('div');
         el.className = 'toast ' + (TOAST_CLR[color] || 'bg-gray-700') + ' text-white px-3 py-2 rounded shadow text-sm';
         el.textContent = msg;
         host.appendChild(el);
-        setTimeout(() => { el.style.opacity = '0'; }, 2700);
-        setTimeout(() => { el.remove(); }, 3000);
+        const total = durationMs || 3000;
+        setTimeout(() => { el.style.opacity = '0'; }, total - 300);
+        setTimeout(() => { el.remove(); }, total);
       }
 
       const $ = id => document.getElementById(id);
@@ -542,7 +545,7 @@
         setTimeout(() => { saveLog(); renderLog(); }, 240);
       }
 
-      function acceptScan(rawValue, source) {
+      function acceptScan(rawValue, source, tagOverride) {
         const value = String(rawValue || '').trim();
         if (!value) return;
         source = source || 'scan';
@@ -551,20 +554,26 @@
         lastScanAt = now;
 
         if (scanMode === 'qr') {
-          if (scannedSet.has(normalizeInstall(value))) { toast('Duplicate: ' + value, 'orange'); return; }
-          commitScan(value, 'qr');
+          if (scannedSet.has(normalizeInstall(value))) { toast('Duplicate: ' + value, 'orange', 9000); return; }
+          if (source === 'manual') {
+            commitScan(value, 'qr', tagOverride);
+          } else {
+            commitScan(value, 'qr', $('tagInput').value.trim());
+            $('tagInput').value = '';
+          }
         } else {
-          if (mappedBarcodeSet.has(value)) { toast('Duplicate barcode: ' + value, 'orange'); return; }
+          if (mappedBarcodeSet.has(value)) { toast('Duplicate barcode: ' + value, 'orange', 9000); return; }
           if (source === 'manual') {
             pendingBarcode = null;
             updatePendingIndicator();
-            commitScan(value, 'barcode');
+            commitScan(value, 'barcode', tagOverride);
             return;
           }
           if (pendingBarcode === value) {
             pendingBarcode = null;
             updatePendingIndicator();
-            commitScan(value, 'barcode');
+            commitScan(value, 'barcode', $('tagInput').value.trim());
+            $('tagInput').value = '';
           } else {
             pendingBarcode = value;
             updatePendingIndicator();
@@ -572,14 +581,21 @@
         }
       }
 
-      function commitScan(value, kind) {
-        const tag = nextTagId();
+      function commitScan(value, kind, tagOverride) {
+        let tag;
+        if (tagOverride) {
+          if (tagSet.has(tagOverride)) { toast('Duplicate tag: ' + tagOverride, 'orange', 9000); return; }
+          tag = tagOverride;
+        } else {
+          tag = nextTagId();
+        }
         let qr, barcode;
         if (kind === 'qr') {
           qr = value;
           barcode = csvIndex.byInstall.get(value)
                  || csvIndex.byInstall.get(normalizeInstall(value))
                  || 'NOT FOUND';
+          if (barcode === 'NOT FOUND') { toast('Not in CSV: ' + value, 'orange', 9000); return; }
         } else {
           barcode = value;
           qr = csvIndex.byBarcode.get(value) || 'NOT FOUND';
@@ -592,8 +608,7 @@
         saveLog();
         renderLog();
         if (kind === 'qr') {
-          if (barcode === 'NOT FOUND') toast('+ ' + tag + ' (not in CSV)', 'yellow');
-          else toast('+ ' + tag + ' → ' + barcode, 'blue');
+          toast('+ ' + tag + ' → ' + barcode, 'blue');
         } else {
           if (qr === 'NOT FOUND') toast('+ ' + tag + ' (barcode, not in CSV)', 'purple');
           else toast('+ ' + tag + ' ← ' + qr, 'purple');
@@ -750,8 +765,10 @@
         const submitManual = () => {
           const v = $('manualInput').value;
           if (!v.trim()) return;
-          acceptScan(v, 'manual');
+          const tagOverride = $('tagInput').value.trim();
+          acceptScan(v, 'manual', tagOverride);
           $('manualInput').value = '';
+          $('tagInput').value = '';
         };
         $('btnManual').addEventListener('click', submitManual);
         $('manualInput').addEventListener('keydown', (e) => {
