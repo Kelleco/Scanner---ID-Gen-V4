@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Scanner & ID Gen** is a browser-based, zero-backend inventory scanning and sequential tagging application. It enables technicians or warehouse staff to scan physical items via a device camera, auto-assign sequential ID tags, look up items in a reference CSV database, and export a complete scan log as CSV. All data stays in the browser — no server, no login required for core functionality.
+**Scanner & ID Gen** is a browser-based, zero-backend inventory scanning and sequential tagging application. It enables technicians or warehouse staff to scan physical items via a device camera, auto-assign sequential ID tags, look up items in a reference CSV database, and export a complete scan log as CSV. All data stays in the browser — no server, no login required.
 
 **Platform:** Single-page application (HTML + vanilla JS + Tailwind CSS)  
 **Deployment:** GitHub Pages (static hosting)  
@@ -12,7 +12,7 @@
 
 ## Problem Statement
 
-Field technicians need to rapidly tag physical assets (e.g., equipment with install numbers) with unique sequential IDs, cross-reference them against a known barcode database, and produce a clean CSV for downstream systems. Existing tools require server infrastructure, native apps, or manual spreadsheet entry. This tool runs entirely in the browser with camera access and optional Google Drive integration.
+Field technicians need to rapidly tag physical assets (e.g., equipment with install numbers) with unique sequential IDs, cross-reference them against a known barcode database, and produce a clean CSV for downstream systems. Existing tools require server infrastructure, native apps, or manual spreadsheet entry. This tool runs entirely in the browser with camera access.
 
 ---
 
@@ -62,9 +62,7 @@ Load CSV database → Configure ID format → Start camera → Scan item
 
 ### 3. CSV Database Integration
 
-- Load reference data from:
-  - **Local file picker** (native `<input type="file">`)
-  - **Google Drive picker** (OAuth2, see §7)
+- Load reference data via **local file picker** (native `<input type="file">`)
 - Required CSV columns: `Install No.` and `Barcode` (case-insensitive, handles trailing commas and BOM)
 - On QR scan: looks up Install No → retrieves Barcode
 - On Barcode scan: looks up Barcode → retrieves Install No
@@ -106,20 +104,13 @@ Load CSV database → Configure ID format → Start camera → Scan item
 - Data restored automatically on page reload
 - Order of rows (including drag-and-drop sequence) preserved
 
-### 7. Google Drive Integration
-
-- "Drive" button opens Google Picker modal
-- Supports CSV and Google Sheets files (Sheets auto-exported to CSV)
-- OAuth2 flow: access token held in-memory only, cleared on `pagehide`
-- Public API key and Client ID restricted in Google Cloud Console to GitHub Pages origin
-
-### 8. Clear History
+### 7. Clear History
 
 - Button with confirmation modal
 - Clears all log rows, in-memory tracking sets, and `localStorage` log entry
 - Preserves loaded CSV database and ID settings
 
-### 9. Offline Support (PWA)
+### 8. Offline Support (PWA)
 
 - Installable as a Progressive Web App ("Add to Home screen") on Android Chrome
 - A service worker (`sw.js`) precaches the full app shell on first visit:
@@ -186,10 +177,8 @@ Auto-dismiss after 3 seconds.
 ## Security Requirements
 
 - **XSS:** All user-controlled values HTML-escaped via `escHtml()` before DOM insertion; editable cells read via `innerText` not `innerHTML`
-- **OAuth tokens:** Never written to localStorage; cleared on page hide
 - **CSP:** Meta tag restricts scripts/styles/connections to approved CDNs; no `unsafe-eval`
 - **Referrer policy:** `strict-origin-when-cross-origin`
-- **Google API credentials:** Public-safe (browser-restricted by origin and API scope in Google Cloud Console)
 - **Secret scanning:** gitleaks pre-commit hook configured locally; GitHub secret scanning enabled
 
 ---
@@ -201,11 +190,10 @@ Auto-dismiss after 3 seconds.
 | Tailwind CSS | Responsive utility-first styling | Vendored (`vendor/`) |
 | html5-qrcode | Camera QR/barcode scanning | Vendored (`vendor/`) |
 | PapaParse | CSV parsing | Vendored (`vendor/`) |
-| Google APIs (Picker, OAuth2, Drive) | Drive file selection and access | CDN |
 | Google Fonts (Inter, JetBrains Mono) | Typography | CDN (system-font fallback offline) |
 
 The three offline-critical libraries are vendored locally so the app works
-offline and the service-worker cache stays same-origin (see §9).
+offline and the service-worker cache stays same-origin (see §8).
 
 **Built-in browser APIs used:** Camera, Fetch, File System Access, localStorage, Vibration, Page Visibility, Service Worker, Cache Storage
 
