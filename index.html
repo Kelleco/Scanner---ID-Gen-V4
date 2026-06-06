@@ -51,37 +51,6 @@
       <span class="text-xs text-gray-500">Phase 3</span>
     </header>
 
-    <section class="bg-white rounded-lg shadow p-4 space-y-2">
-      <div class="flex items-center justify-between">
-        <h2 class="font-semibold">Reference CSV</h2>
-        <div class="flex gap-2">
-          <input id="csvFile" type="file" accept=".csv,text/csv" class="hidden">
-          <button id="btnLoadCsv" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm">Load CSV</button>
-          <button id="btnClearCsv" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm hidden">Clear</button>
-        </div>
-      </div>
-      <div id="csvStatus" class="text-sm text-gray-600">No CSV loaded — scans will log as NOT FOUND.</div>
-    </section>
-
-    <section class="bg-white rounded-lg shadow p-4 space-y-3">
-      <h2 class="font-semibold">ID Format</h2>
-      <div class="grid grid-cols-3 gap-3">
-        <label class="block">
-          <span class="text-xs text-gray-600">Prefix</span>
-          <input id="cfgPrefix" type="text" maxlength="4" class="mono mt-1 w-full rounded border-gray-300 px-2 py-1" placeholder="RS">
-        </label>
-        <label class="block">
-          <span class="text-xs text-gray-600">Start #</span>
-          <input id="cfgStart" type="number" min="0" value="1" class="mono mt-1 w-full rounded border-gray-300 px-2 py-1">
-        </label>
-        <label class="block">
-          <span class="text-xs text-gray-600">Min Digits</span>
-          <input id="cfgDigits" type="number" min="1" max="10" value="3" class="mono mt-1 w-full rounded border-gray-300 px-2 py-1">
-        </label>
-      </div>
-      <div class="text-sm text-gray-600">Next ID: <span id="nextIdPreview" class="mono font-semibold text-gray-900">RS001</span></div>
-    </section>
-
     <section class="bg-white rounded-lg shadow p-4 space-y-3">
       <div class="flex items-center justify-between">
         <h2 class="font-semibold">Scanner</h2>
@@ -101,7 +70,10 @@
         <input id="manualInput" type="text" placeholder="Or type a value and press Enter&hellip;" class="flex-1 rounded border-gray-300 px-2 py-1">
         <button id="btnManual" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm">Add</button>
       </div>
-      <div id="pendingIndicator" class="text-xs text-purple-700 hidden">&#9203; 1/2 reads&hellip; show the barcode again to confirm.</div>
+      <div id="pendingIndicator" class="hidden flex items-center gap-2 text-xs text-purple-700">
+        <div id="bufferDots" class="flex gap-1 items-center"></div>
+        <span id="bufferLabel"></span>
+      </div>
     </section>
 
     <section class="bg-white rounded-lg shadow p-4 space-y-3">
@@ -130,6 +102,37 @@
         </table>
       </div>
     </section>
+
+    <section class="bg-white rounded-lg shadow p-4 space-y-3">
+      <h2 class="font-semibold">ID Format</h2>
+      <div class="grid grid-cols-3 gap-3">
+        <label class="block">
+          <span class="text-xs text-gray-600">Prefix</span>
+          <input id="cfgPrefix" type="text" maxlength="4" class="mono mt-1 w-full rounded border-gray-300 px-2 py-1" placeholder="RS">
+        </label>
+        <label class="block">
+          <span class="text-xs text-gray-600">Start #</span>
+          <input id="cfgStart" type="number" min="0" value="1" class="mono mt-1 w-full rounded border-gray-300 px-2 py-1">
+        </label>
+        <label class="block">
+          <span class="text-xs text-gray-600">Min Digits</span>
+          <input id="cfgDigits" type="number" min="1" max="10" value="3" class="mono mt-1 w-full rounded border-gray-300 px-2 py-1">
+        </label>
+      </div>
+      <div class="text-sm text-gray-600">Next ID: <span id="nextIdPreview" class="mono font-semibold text-gray-900">RS001</span></div>
+    </section>
+
+    <section class="bg-white rounded-lg shadow p-4 space-y-2">
+      <div class="flex items-center justify-between">
+        <h2 class="font-semibold">Reference CSV</h2>
+        <div class="flex gap-2">
+          <input id="csvFile" type="file" accept=".csv,text/csv" class="hidden">
+          <button id="btnLoadCsv" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm">Load CSV</button>
+          <button id="btnClearCsv" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm hidden">Clear</button>
+        </div>
+      </div>
+      <div id="csvStatus" class="text-sm text-gray-600">No CSV loaded — scans will log as NOT FOUND.</div>
+    </section>
   </div>
 
   <div id="clearModal" class="fixed inset-0 z-40 flex hidden items-center justify-center p-4" style="background:rgba(0,0,0,0.4)">
@@ -157,6 +160,8 @@
       const STORAGE_SORT = 'qrtag_sort';
       const SCAN_COOLDOWN_MS = 1500;
       const DELETE_CONFIRM_MS = 3000;
+      const REQUIRED_READS = 2;
+      const DEBOUNCE_C39 = 300;
 
       let log = [];
       const scannedSet = new Set();
@@ -165,7 +170,8 @@
 
       const csvIndex = { byInstall: new Map(), byBarcode: new Map(), count: 0, name: '' };
       let scanMode = 'qr';
-      let pendingBarcode = null;
+      let barcodeReadBuffer = [];
+      let lastScannedTime = 0;
       let sortState = { col: null, dir: 'asc' };
 
       let config = { prefix: 'RS', start: 1, minDigits: 3 };
@@ -328,18 +334,53 @@
           btn.innerHTML = 'Mapped Barcode Mode &rarr; Mapped Barcode';
           btn.className = 'text-xs px-3 py-1 rounded font-medium bg-purple-100 text-purple-800 hover:bg-purple-200';
         }
-        updatePendingIndicator();
+        resetBarcodeBuffer();
       }
 
-      function updatePendingIndicator() {
-        const el = $('pendingIndicator');
-        if (scanMode === 'barcode' && pendingBarcode) {
-          el.classList.remove('hidden');
-          el.textContent = '⏳ 1/2 reads… show the barcode again to confirm: ' + pendingBarcode;
-        } else {
-          el.classList.add('hidden');
-          el.textContent = '';
+      function resetBarcodeBuffer() {
+        barcodeReadBuffer = [];
+        lastScannedTime = 0;
+        $('pendingIndicator').classList.add('hidden');
+        renderBufferProgress($('bufferDots'), 0, REQUIRED_READS);
+        $('bufferLabel').textContent = '';
+      }
+
+      function handleCode39Scan(decodedText, decodedResult, onProgress, onConfirmed) {
+        const now = Date.now();
+        if (now - lastScannedTime < DEBOUNCE_C39) return;
+        lastScannedTime = now;
+
+        if (decodedResult?.result?.format?.formatName !== 'CODE_39') return;
+
+        if (barcodeReadBuffer.length > 0 && barcodeReadBuffer[0] !== decodedText) {
+          barcodeReadBuffer = [];
         }
+        barcodeReadBuffer.push(decodedText);
+        onProgress(barcodeReadBuffer.length, REQUIRED_READS);
+
+        if (barcodeReadBuffer.length >= REQUIRED_READS) {
+          const confirmed = decodedText;
+          barcodeReadBuffer = [];
+          lastScannedTime = 0;
+          onConfirmed(confirmed);
+        }
+      }
+
+      function renderBufferProgress(containerEl, readCount, required) {
+        containerEl.innerHTML = '';
+        for (let i = 0; i < required; i++) {
+          const dot = document.createElement('span');
+          dot.style.cssText = 'display:inline-block;width:1.25rem;height:1.25rem;border-radius:9999px;';
+          dot.style.background = i < readCount ? '#6366f1' : '#c7d2fe';
+          if (i < readCount) dot.style.boxShadow = '0 1px 3px rgba(0,0,0,0.2)';
+          containerEl.appendChild(dot);
+        }
+      }
+
+      function bufferStatusLabel(readCount, required) {
+        if (readCount === 0) return '';
+        if (readCount >= required) return 'Confirmed!';
+        return `Reading… (${readCount}/${required})`;
       }
 
       function renderSortArrows() {
@@ -564,20 +605,10 @@
         } else {
           if (mappedBarcodeSet.has(value)) { toast('Duplicate barcode: ' + value, 'orange', 9000); return; }
           if (source === 'manual') {
-            pendingBarcode = null;
-            updatePendingIndicator();
+            resetBarcodeBuffer();
             commitScan(value, 'barcode', tagOverride);
-            return;
           }
-          if (pendingBarcode === value) {
-            pendingBarcode = null;
-            updatePendingIndicator();
-            commitScan(value, 'barcode', $('tagInput').value.trim());
-            $('tagInput').value = '';
-          } else {
-            pendingBarcode = value;
-            updatePendingIndicator();
-          }
+          // scan source is handled by handleCode39Scan in the scanner callback
         }
       }
 
@@ -637,7 +668,25 @@
           await qrInstance.start(
             back.id,
             { fps: 10, qrbox: { width: 250, height: 250 } },
-            (decoded) => acceptScan(decoded, 'scan'),
+            (decoded, result) => {
+              if (scanMode === 'barcode') {
+                handleCode39Scan(decoded, result,
+                  (n, req) => {
+                    renderBufferProgress($('bufferDots'), n, req);
+                    $('bufferLabel').textContent = bufferStatusLabel(n, req);
+                    $('pendingIndicator').classList.toggle('hidden', n === 0);
+                  },
+                  (val) => {
+                    if (mappedBarcodeSet.has(val)) { toast('Duplicate barcode: ' + val, 'orange', 9000); return; }
+                    commitScan(val, 'barcode', $('tagInput').value.trim());
+                    $('tagInput').value = '';
+                    resetBarcodeBuffer();
+                  }
+                );
+              } else {
+                acceptScan(decoded, 'scan');
+              }
+            },
             () => {}
           );
           scannerRunning = true;
@@ -777,7 +826,6 @@
 
         $('modeToggle').addEventListener('click', () => {
           scanMode = (scanMode === 'qr') ? 'barcode' : 'qr';
-          pendingBarcode = null;
           renderModeUI();
         });
 
